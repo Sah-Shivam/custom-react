@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Custom React Renderer - Console Output</title>
+<style>
+  /* Minimal elegant styling inspired by guidelines */
+  body {
+    margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+      Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    background-color: #ffffff;
+    color: #374151; /* dark gray */
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  header {
+    position: sticky;
+    top: 0;
+    background: #f9fafb;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 2rem;
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.1);
+    z-index: 10;
+  }
+  header h1 {
+    font-weight: 800;
+    font-size: 2.5rem;
+    color: #111827;
+    margin: 0;
+  }
+  main {
+    flex-grow: 1;
+    max-width: 960px;
+    margin: 3rem auto;
+    padding: 0 1rem;
+  }
+  .description {
+    font-size: 1.125rem;
+    line-height: 1.6;
+    color: #6b7280;
+    margin-bottom: 2rem;
+  }
+  button {
+    background-color: #111827;
+    color: #ffffff;
+    border: none;
+    font-weight: 700;
+    font-size: 1.125rem;
+    padding: 0.75rem 2rem;
+    border-radius: 0.75rem;
+    cursor: pointer;
+    transition: background-color 0.25s ease;
+    box-shadow: 0 2px 8px rgb(0 0 0 / 0.2);
+  }
+  button:hover,
+  button:focus {
+    background-color: #374151;
+    outline: none;
+  }
+  footer {
+    text-align: center;
+    font-size: 0.875rem;
+    color: #9ca3af;
+    padding: 1rem 0;
+    user-select: none;
+  }
+  pre.output {
+    background: #1f2937;
+    color: #d1d5db;
+    padding: 1rem 1.25rem;
+    border-radius: 0.75rem;
+    overflow-x: auto;
+    font-family: 'Courier New', Courier, monospace;
+    max-height: 50vh;
+    white-space: pre-wrap;
+    user-select: text;
+    margin-top: 2rem;
+    box-shadow: 0 4px 6px rgb(0 0 0 / 0.1);
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Custom React Renderer</h1>
+</header>
+<main>
+  <p class="description">
+    This demo implements a custom React-like renderer that outputs components as structured HTML/XML markup to the browser console and below.
+    Click the button below to render the sample component tree.
+  </p>
+  <button id="renderBtn" aria-label="Render components to console">Render to Console</button>
+  <pre id="output" class="output" aria-live="polite" aria-atomic="true"></pre>
+</main>
+<footer>
+  &copy; 2024 Custom React Renderer Demo - Created by Sahshivam
+</footer>
+
+<script>
+  // Custom React-like API
+
+  // Symbol for Fragment support
+  const Fragment = Symbol('Fragment');
+
+  // createElement function - type can be string (tag) or function (component) or Fragment symbol
+  function createElement(type, props, ...children) {
+    props = props || {};
+    // flatten children here to support nested arrays (bonus)
+    const flatChildren = flatten(children).filter(c => c != null && c !== false && c !== true);
+    // If props.children exists, merge and flatten with passed children
+    if (props.children) {
+      const propChildren = Array.isArray(props.children) ? props.children : [props.children];
+      return { type, props: {...props, children: [...flatChildren, ...flatten(propChildren)]} };
+    }
+    // Otherwise, children come only from args
+    return { type, props: {...props, children: flatChildren} };
+  }
+
+  // Flatten nested arrays recursively
+  function flatten(arr) {
+    return arr.reduce((acc, val) => {
+      if (Array.isArray(val)) acc.push(...flatten(val));
+      else acc.push(val);
+      return acc;
+    }, []);
+  }
+
+  // render function: convert element tree to structured string with indentation
+  function render(element, depth = 0) {
+    const indent = '  '.repeat(depth);
+
+    // Primitives (string or number)
+    if (typeof element === 'string' || typeof element === 'number') {
+      return indent + escapeHtml(String(element));
+    }
+
+    // Arrays
+    if (Array.isArray(element)) {
+      return element.map(el => render(el, depth)).join('\n');
+    }
+
+    // Element object with type and props
+    const { type, props = {} } = element;
+
+    // Fragments: render children directly (no wrapper)
+    if (type === Fragment) {
+      const children = props.children || [];
+      if (!Array.isArray(children)) {
+        return render(children, depth);
+      }
+      return children.map(child => render(child, depth)).join('\n');
+    }
+
+    // Functional component
+    if (typeof type === 'function') {
+      try {
+        const compOutput = type(props);
+        return render(compOutput, depth);
+      } catch (err) {
+        return indent + `<!-- Error rendering component: ${err.message} -->`;
+      }
+    }
+
+    // String type (HTML tag)
+    if (typeof type === 'string') {
+      const children = props.children || [];
+      const childrenArray = Array.isArray(children) ? children : [children];
+
+      // Prepare props string, excluding children prop itself
+      const propsString = Object.entries(props)
+        .filter(([key]) => key !== 'children')
+        .map(([key, value]) => {
+          if (value === true) return key;
+          if (value === false || value == null) return '';
+          return `${key}="${escapeHtml(String(value))}"`;
+        })
+        .filter(Boolean)
+        .join(' ');
+
+      const openTag = propsString.length ? `<${type} ${propsString}>` : `<${type}>`;
+
+      // Self-closing if no children
+      if (childrenArray.length === 0) {
+        // XHTML-style self-closing
+        return indent + openTag.replace('>', ' />');
+      }
+
+      // Render children one level deeper
+      const renderedChildren = childrenArray.map(child => render(child, depth + 1)).join('\n');
+
+      const closeTag = `</${type}>`;
+
+      return `${indent}${openTag}\n${renderedChildren}\n${indent}${closeTag}`;
+    }
+
+    // Unknown type fallback
+    return indent + `<!-- Unknown element type: ${String(type)} -->`;
+  }
+
+  // Escape HTML special characters for safe output
+  function escapeHtml(text) {
+    return text.replace(/[&<>"']/g, char => {
+      switch(char) {
+        case '&': return '&amp;';
+        case '<': return '&lt;';
+        case '>': return '&gt;';
+        case '"': return '&quot;';
+        case "'": return '&#39;';
+        default: return char;
+      }
+    });
+  }
+
+  // Demo components
+
+  // Hello functional component
+  function Hello(props) {
+    return createElement('div', {class: 'hello'}, 'Hello ', props.name, '!');
+  }
+
+  // List component renders an array of items as list elements
+  function List(props) {
+    return createElement(
+      'ul',
+      null,
+      props.items.map((item, i) =>
+        createElement('li', {key: i}, item)
+      )
+    );
+  }
+
+  // Main App component demonstrating fragments, nested arrays, nested components
+  function App() {
+    return createElement(
+      Fragment,
+      null,
+      createElement('h1', null, 'Custom React Renderer Demo'),
+      createElement(Hello, {name: 'World'}),
+      createElement('section', {id: 'list-section'},
+        createElement('h2', null, 'Features'),
+        createElement(List, {items: ['Custom createElement', 'Nested Components', 'Console Output']}),
+        createElement(Fragment, null,
+          createElement('p', null, 'Bonus support for fragments and nested arrays.'),
+          [
+            createElement('p', {key: 'nested-1'}, 'This is a nested array of elements.'),
+            createElement('p', {key: 'nested-2'}, 'They render correctly with proper indentation.')
+          ]
+        )
+      )
+    );
+  }
+
+  // Output result to console and page <pre> element
+  function outputResult(str) {
+    console.clear();
+    console.log('=== Custom React Renderer Output (HTML-like) ===');
+    console.log(str);
+    const outputElem = document.getElementById('output');
+    if (outputElem) {
+      outputElem.textContent = str;
+    }
+  }
+
+  // Wait for DOM content loaded to avoid missing elements
+  document.addEventListener('DOMContentLoaded', () => {
+    const btn = document.getElementById('renderBtn');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        try {
+          const tree = createElement(App, null);
+          const output = render(tree);
+          outputResult(output);
+        } catch (err) {
+          console.error('Error during rendering:', err);
+          outputResult(`<!-- Error during rendering: ${err.message} -->`);
+        }
+      });
+    } else {
+      console.error('Render button not found');
+    }
+  });
+</script>
+</body>
+</html>
+
